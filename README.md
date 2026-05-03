@@ -11,6 +11,7 @@ A full-stack application (FastAPI + React/Vite) for deep learning-based binary s
 ### 1. Download Model Weights
 Before starting the backend, you need to download the required PyTorch `.pth` model files and place them inside the `backend/` directory:
 - `best_model.pth`: The trained custom model weights.
+Link:https://drive.google.com/file/d/1KvrcrUshGom8CA9JmjQkAXsIknWTwlRp/view?usp=sharing
 
 - `efficientnet-b4-6ed6700e.pth`: The pre-trained EfficientNet-B4 backbone. Download it from [here](https://github.com/lukemelas/EfficientNet-PyTorch/releases/download/1.0/efficientnet-b4-6ed6700e.pth).
 
