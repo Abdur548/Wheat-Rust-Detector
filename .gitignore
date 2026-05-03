@@ -1,0 +1,9 @@
+node_modules/
+*.pt
+*.pth
+*.h5
+data/
+datasets/
+*.zip
+*.png
+*.jpg
