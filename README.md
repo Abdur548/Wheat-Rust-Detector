@@ -17,11 +17,18 @@ Link:https://drive.google.com/file/d/1KvrcrUshGom8CA9JmjQkAXsIknWTwlRp/view?usp=
 
 Ensure both files are present in the `backend/` folder.
 
-### 2. Start the Backend
-Open a terminal in the root directory. Activate the python virtual environment (if using one), install dependencies, and start the FastAPI server:
+### 2. Install Dependencies
+Ensure you have Python 3.8+ installed. Install the required packages using the `requirements.txt` file:
 
 ```powershell
-# Activate virtual environment
+pip install -r requirements.txt
+```
+
+### 3. Start the Backend
+Open a terminal in the root directory. Activate the python virtual environment (if using one), and start the FastAPI server:
+
+```powershell
+# Activate virtual environment (optional)
 .\venv\Scripts\Activate
 
 # Start the backend server

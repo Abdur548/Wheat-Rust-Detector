@@ -1,0 +1,10 @@
+fastapi==0.124.2
+uvicorn==0.38.0
+torch
+torchvision
+numpy
+Pillow
+efficientnet_pytorch==0.7.1
+python-multipart
+streamlit==1.45.0
+pandas
