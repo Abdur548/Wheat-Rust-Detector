@@ -8,7 +8,15 @@ A full-stack application (FastAPI + React/Vite) for deep learning-based binary s
 
 ## Getting Started
 
-### 1. Start the Backend
+### 1. Download Model Weights
+Before starting the backend, you need to download the required PyTorch `.pth` model files and place them inside the `backend/` directory:
+- `best_model.pth`: The trained custom model weights.
+
+- `efficientnet-b4-6ed6700e.pth`: The pre-trained EfficientNet-B4 backbone. Download it from [here](https://github.com/lukemelas/EfficientNet-PyTorch/releases/download/1.0/efficientnet-b4-6ed6700e.pth).
+
+Ensure both files are present in the `backend/` folder.
+
+### 2. Start the Backend
 Open a terminal in the root directory. Activate the python virtual environment (if using one), install dependencies, and start the FastAPI server:
 
 ```powershell
@@ -20,7 +28,7 @@ uvicorn backend.main:app --reload
 ```
 The API will run at `http://localhost:8000`.
 
-### 2. Start the Frontend
+### 3. Start the Frontend
 Open a new terminal in the `frontend` directory. Install the npm dependencies and start the Vite dev server:
 
 ```powershell
