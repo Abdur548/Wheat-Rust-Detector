@@ -88,10 +88,10 @@ class CANet(nn.Module):
         self.encoder = EfficientNet.from_name('efficientnet-b4')
         try:
             self.encoder.load_state_dict(
-                torch.load('backend/efficientnet-b4-6ed6700e.pth', map_location='cpu')
+                torch.load('backend/models/efficientnet-b4-6ed6700e.pth', map_location='cpu')
             )
         except Exception:
-            print("Warning: Could not load efficientnet-b4 weights locally. Ensure they are in backend/")
+            print("Warning: Could not load efficientnet-b4 weights locally. Ensure they are in backend/models/")
         
         self.reduce  = ConvBNReLU(1792, 512, k=1, p=0)
         self.cam     = CAM(512, 256)
@@ -115,35 +115,32 @@ model = None
 @app.on_event("startup")
 def load_model():
     global model
+    # Shipped via Git LFS in backend/models/; the README asks for it in backend/.
+    candidates = ['backend/models/best_model.pth', 'backend/best_model.pth']
+    model_path = next((p for p in candidates if os.path.exists(p)), None)
+    if model_path is None:
+        model = None
+        print(f"Error: no checkpoint at {' or '.join(candidates)}. /api/predict will return 500.")
+        return
     model = CANet().to(device)
-    model_path = 'backend/best_model.pth'
-    if os.path.exists(model_path):
-        ckpt = torch.load(model_path, map_location=device)
-        model.load_state_dict(ckpt['model'])
-        model.eval()
-        print(f"Model loaded successfully on {device}")
-    else:
-        print(f"Warning: {model_path} not found. Prediction will use untrained weights.")
+    ckpt = torch.load(model_path, map_location=device)
+    model.load_state_dict(ckpt['model'])
+    model.eval()
+    print(f"Model loaded from {model_path} on {device}")
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/results")
 def get_results():
-    filepath = 'backend/results.json'
-    if os.path.exists(filepath):
-        with open(filepath, 'r') as f:
-            return json.load(f)
-    else:
-        # Fallback if file doesn't exist
-        return {
-            "final_metrics": {"iou": 0.845, "dice": 0.912, "precision": 0.923, "recall": 0.901, "specificity": 0.956, "accuracy": 0.915},
-            "best_threshold": 0.45,
-            "history": [{"epoch": 1, "train_loss": 0.5, "val_loss": 0.45, "val_iou": 0.5, "val_dice": 0.6}]
-        }
+    filepath = 'backend/results/results.json'
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail=f"{filepath} not found")
+    with open(filepath, 'r') as f:
+        return json.load(f)
 
 @app.get("/api/images/{name}")
 def get_image(name: str):
-    filepath = os.path.join('backend', name)
+    filepath = os.path.join('backend', 'viusalisations', name)
     if os.path.exists(filepath) and name.endswith('.png'):
         return FileResponse(filepath)
     raise HTTPException(status_code=404, detail="Image not found")

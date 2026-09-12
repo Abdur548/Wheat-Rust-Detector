@@ -40,39 +40,6 @@ const Landing = () => {
         </div>
       </section>
 
-      {/* Sprint Table */}
-      <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 mt-16">
-        <h2 className="text-3xl font-bold text-center mb-8 text-text-primary">Sprint Comparison Summary</h2>
-        <div className="bg-card rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="p-4 font-semibold text-text-secondary">Metric</th>
-                <th className="p-4 font-semibold text-text-secondary">Sprint 1 (DeepLabV3+)</th>
-                <th className="p-4 font-semibold text-text-secondary">Sprint 2 (CANet)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {[
-                { metric: 'IoU', s1: '0.556', s2: '0.587' },
-                { metric: 'Dice (F1)', s1: '0.624', s2: '0.649' },
-                { metric: 'Precision', s1: '0.576', s2: '0.608' },
-                { metric: 'Recall', s1: '0.683', s2: '0.676', worse: true },
-                { metric: 'Accuracy', s1: '97.75%', s2: '97.97%' },
-                { metric: 'Specificity', s1: '98.18%', s2: '98.45%' },
-                { metric: 'Val Loss', s1: '0.196', s2: '0.166' },
-              ].map((row, i) => (
-                <tr key={i} className="hover:bg-gray-50 transition">
-                  <td className="p-4 font-medium text-text-primary">{row.metric}</td>
-                  <td className="p-4 text-text-secondary">{row.s1}</td>
-                  <td className={`p-4 font-semibold ${row.worse ? 'text-danger' : 'text-success'}`}>{row.s2}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
       {/* Footer */}
       <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-24 text-center text-text-secondary border-t border-gray-200 pt-8">
         <p className="font-medium mb-2">Project Team: Syed Muhammad Abdur Rahman (467471), Abdul Hadi Sheikh (454448), Abdullah Salim Nizami (457223)</p>

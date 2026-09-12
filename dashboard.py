@@ -172,7 +172,7 @@ class CANet(nn.Module):
         self.encoder = EfficientNet.from_name('efficientnet-b4')
         try:
             self.encoder.load_state_dict(
-                torch.load('efficientnet-b4-6ed6700e.pth', map_location='cpu')
+                torch.load('backend/models/efficientnet-b4-6ed6700e.pth', map_location='cpu')
             )
         except Exception as e:
             pass # Handle gracefully in app if needed, or ignore if pretrained missing
@@ -197,8 +197,8 @@ class CANet(nn.Module):
 def load_model():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model  = CANet().to(device)
-    if os.path.exists('best_model.pth'):
-        ckpt   = torch.load('best_model.pth', map_location=device)
+    if os.path.exists('backend/models/best_model.pth'):
+        ckpt   = torch.load('backend/models/best_model.pth', map_location=device)
         model.load_state_dict(ckpt['model'])
         model.eval()
         return model, device
@@ -207,8 +207,8 @@ def load_model():
 
 @st.cache_data
 def load_results():
-    if os.path.exists('results.json'):
-        with open('results.json', 'r') as f:
+    if os.path.exists('backend/results/results.json'):
+        with open('backend/results/results.json', 'r') as f:
             return json.load(f)
     return None
 
@@ -246,18 +246,6 @@ def page_landing():
         </div>
         ''', unsafe_allow_html=True)
         
-    st.markdown("### 📈 Sprint Comparison Summary")
-    
-    # Sprint comparison table
-    data = {
-        "Metric": ["IoU", "Dice (F1)", "Precision", "Recall", "Accuracy", "Specificity"],
-        "DeepLabV3+ (Sprint 1)": ["0.752", "0.831", "0.854", "0.810", "85.2%", "88.1%"],
-        "CANet (Sprint 2)": ["0.845", "0.912", "0.923", "0.901", "91.5%", "95.6%"],
-        "Improvement": ["+12.3%", "+9.7%", "+8.0%", "+11.2%", "+7.3%", "+8.5%"]
-    }
-    df = pd.DataFrame(data)
-    st.dataframe(df, use_container_width=True, hide_index=True)
-    
     st.markdown("---")
     st.markdown('''
     <div style="text-align: center; color: #666;">
@@ -272,12 +260,8 @@ def page_results():
     results = load_results()
     
     if not results:
-        st.warning("⚠️ `results.json` not found. Showing placeholder targets.")
-        results = {
-            "final_metrics": {"iou": 0.845, "dice": 0.912, "precision": 0.923, "recall": 0.901, "specificity": 0.956, "accuracy": 0.915},
-            "best_threshold": 0.45,
-            "history": [{"epoch": 1, "train_loss": 0.5, "val_loss": 0.45, "val_iou": 0.5, "val_dice": 0.6}]
-        }
+        st.error("`backend/results/results.json` not found — no metrics to display.")
+        return
     
     st.markdown("### 🎯 Target Evaluation")
     st.markdown("Goals: IoU ≥ 0.83 | Dice ≥ 0.90 | Accuracy ≥ 90% | Specificity ≥ 95%")
@@ -287,14 +271,14 @@ def page_results():
     def get_color(val, target): return "normal" if val >= target else "inverse"
     
     c1, c2, c3 = st.columns(3)
-    c1.metric("IoU", f"{fm.get('iou', 0):.3f}", delta="≥ 0.83", delta_color=get_color(fm.get('iou', 0), 0.83))
-    c2.metric("Dice/F1", f"{fm.get('dice', 0):.3f}", delta="≥ 0.90", delta_color=get_color(fm.get('dice', 0), 0.90))
-    c3.metric("Accuracy", f"{fm.get('accuracy', 0)*100:.1f}%", delta="≥ 90%", delta_color=get_color(fm.get('accuracy', 0), 0.90))
+    c1.metric("IoU", f"{fm.get('IoU', 0):.3f}", delta="≥ 0.83", delta_color=get_color(fm.get('IoU', 0), 0.83))
+    c2.metric("Dice/F1", f"{fm.get('F1 / Dice', 0):.3f}", delta="≥ 0.90", delta_color=get_color(fm.get('F1 / Dice', 0), 0.90))
+    c3.metric("Accuracy", f"{fm.get('Accuracy', 0)*100:.1f}%", delta="≥ 90%", delta_color=get_color(fm.get('Accuracy', 0), 0.90))
     
     c4, c5, c6 = st.columns(3)
-    c4.metric("Specificity", f"{fm.get('specificity', 0)*100:.1f}%", delta="≥ 95%", delta_color=get_color(fm.get('specificity', 0), 0.95))
-    c5.metric("Precision", f"{fm.get('precision', 0):.3f}")
-    c6.metric("Recall", f"{fm.get('recall', 0):.3f}")
+    c4.metric("Specificity", f"{fm.get('Specificity', 0)*100:.1f}%", delta="≥ 95%", delta_color=get_color(fm.get('Specificity', 0), 0.95))
+    c5.metric("Precision", f"{fm.get('Precision', 0):.3f}")
+    c6.metric("Recall", f"{fm.get('Recall', 0):.3f}")
     
     st.divider()
     
@@ -313,24 +297,24 @@ def page_visualizations():
     st.title("👁️ Visualizations")
     
     st.markdown("### 📈 Training & Validation Curves")
-    if os.path.exists('training_curves.png'):
-        st.image(PILImage.open('training_curves.png'), use_column_width=True)
+    if os.path.exists('backend/viusalisations/training_curves.png'):
+        st.image(PILImage.open('backend/viusalisations/training_curves.png'), use_column_width=True)
     else:
         st.warning("⚠️ `training_curves.png` not found.")
     st.caption("These curves show the loss decreasing and IoU/Dice metrics increasing over epochs, indicating proper convergence and learning without severe overfitting.")
         
     st.divider()
     st.markdown("### 🧮 Confusion Matrix")
-    if os.path.exists('confusion_matrix.png'):
-        st.image(PILImage.open('confusion_matrix.png'), width=600)
+    if os.path.exists('backend/viusalisations/confusion_matrix (2).png'):
+        st.image(PILImage.open('backend/viusalisations/confusion_matrix (2).png'), width=600)
     else:
         st.warning("⚠️ `confusion_matrix.png` not found.")
     st.caption("**True Positives (TP)**: Correctly predicted rust. **True Negatives (TN)**: Correctly predicted healthy tissue. **False Positives (FP)**: Healthy predicted as rust. **False Negatives (FN)**: Rust missed by the model.")
 
     st.divider()
     st.markdown("### 🖼️ Qualitative Results")
-    if os.path.exists('qualitative_results.png'):
-        st.image(PILImage.open('qualitative_results.png'), use_column_width=True)
+    if os.path.exists('backend/viusalisations/qualitative_results.png'):
+        st.image(PILImage.open('backend/viusalisations/qualitative_results.png'), use_column_width=True)
     else:
         st.warning("⚠️ `qualitative_results.png` not found.")
     st.caption("The 4 panels demonstrate the model pipeline: (1) Original Image, (2) Ground Truth Mask from annotators, (3) Probability Heatmap showing model confidence, (4) Final Binary Mask after thresholding.")
@@ -341,7 +325,7 @@ def page_prediction():
     
     model, device = load_model()
     if not model:
-        st.error("🚨 `best_model.pth` not found. Please ensure the model file is in the root directory.")
+        st.error("🚨 `backend/models/best_model.pth` not found.")
         return
         
     st.sidebar.header("Settings")

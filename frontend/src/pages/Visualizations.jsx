@@ -9,7 +9,7 @@ const Visualizations = () => {
     {
       title: 'Confusion Matrix',
       description: 'The confusion matrix provides a detailed breakdown of the model\'s predictions. TP (True Positives) = correctly detected rust. TN (True Negatives) = correctly rejected healthy background. FP (False Positives) = healthy tissue flagged as rust (false alarms). FN (False Negatives) = rust missed by the model. The high TP and TN values indicate strong performance.',
-      imgSrc: 'http://localhost:8000/api/images/confusion_matrix.png',
+      imgSrc: 'http://localhost:8000/api/images/confusion_matrix%20(2).png',
       caption: 'Figure 2: Pixel-wise Confusion Matrix'
     },
     {

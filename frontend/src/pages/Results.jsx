@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import MetricCard from '../components/MetricCard';
-import SprintComparison from '../components/SprintComparison';
 
 const Results = () => {
   const [data, setData] = useState(null);
@@ -98,11 +97,6 @@ const Results = () => {
             ))}
           </tbody>
         </table>
-      </div>
-
-      {/* Sprint Comparison Chart */}
-      <div className="mb-12">
-        <SprintComparison />
       </div>
     </div>
   );
