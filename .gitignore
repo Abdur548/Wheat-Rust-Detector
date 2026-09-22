@@ -1,11 +1,22 @@
 node_modules/
 __pycache__/
 *.pyc
+.pytest_cache/
+venv/
+.venv/
+
+# Weights: only the LFS-tracked backend/models/*.pth are committed
 *.pt
 *.pth
 *.h5
+
+# Data and experiment outputs
 data/
 datasets/
+runs/
 *.zip
 *.png
 *.jpg
+!backend/visualisations/*.png
+!results/**/*.png
+!md/**/*.png

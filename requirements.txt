@@ -1,10 +1,19 @@
+# Web app (FastAPI backend + Streamlit dashboard)
 fastapi==0.124.2
 uvicorn==0.38.0
+python-multipart
+streamlit==1.45.0
+pandas
 torch
 torchvision
 numpy
 Pillow
 efficientnet_pytorch==0.7.1
-python-multipart
-streamlit==1.45.0
-pandas
+
+# Training / evaluation pipeline (nwrd/), also installed by the Kaggle notebook
+segmentation-models-pytorch==0.5.0
+albumentations
+opencv-python-headless
+matplotlib
+scipy
+pytest
