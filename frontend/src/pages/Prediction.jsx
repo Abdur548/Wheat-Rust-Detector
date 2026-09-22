@@ -1,15 +1,25 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { UploadCloud, Image as ImageIcon, Download, Loader2 } from 'lucide-react';
 import SeverityBadge from '../components/SeverityBadge';
 
 const Prediction = () => {
-  const [threshold, setThreshold] = useState(0.45);
+  const [threshold, setThreshold] = useState(0.5);
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+
+  // Start the slider at the threshold selected on the validation split.
+  useEffect(() => {
+    axios.get('http://localhost:8000/api/results')
+      .then((res) => {
+        const t = Number(res.data?.best_threshold);
+        if (t > 0 && t < 1) setThreshold(t);
+      })
+      .catch(() => {});
+  }, []);
 
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files[0]) {

@@ -28,7 +28,7 @@ const Results = () => {
     return <div className="text-center text-danger mt-20">Failed to load results. Ensure the backend is running.</div>;
   }
 
-  const { final_metrics: fm, best_threshold, history } = data;
+  const { final_metrics: fm, best_threshold, history, split } = data;
 
   // Transform history object of arrays into array of objects for the table
   let historyData = [];
@@ -49,7 +49,8 @@ const Results = () => {
 
   return (
     <div className="fade-in max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-      <h1 className="text-4xl font-extrabold mb-8 text-text-primary">Results & Metrics</h1>
+      <h1 className="text-4xl font-extrabold mb-2 text-text-primary">Results & Metrics</h1>
+      <p className="text-text-secondary mb-8">Pixel metrics pooled over the {split || 'validation'} split.</p>
       
       {/* Metric Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
@@ -65,7 +66,7 @@ const Results = () => {
       <div className="bg-card p-6 rounded-xl shadow-sm border border-gray-100 mb-12 flex items-center justify-between">
         <div>
           <h3 className="text-lg font-bold text-text-primary">Best Binarization Threshold</h3>
-          <p className="text-text-secondary mt-1">This threshold was found to maximize the Dice score on the validation set.</p>
+          <p className="text-text-secondary mt-1">Chosen to maximise IoU (equivalently Dice) on the validation split, then applied unchanged to the reported split.</p>
         </div>
         <div className="bg-primary/10 text-primary text-3xl font-extrabold px-6 py-3 rounded-lg border border-primary/20">
           {best_threshold}

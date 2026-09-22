@@ -1,14 +1,12 @@
 import streamlit as st
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
 from PIL import Image as PILImage
 import io
 import json
-import os
+import sys
+from pathlib import Path
 import pandas as pd
-from efficientnet_pytorch import EfficientNet
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -107,110 +105,29 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ── Model definition (from original dashboard.py) ─────────────────────────────
-class ConvBNReLU(nn.Module):
-    def __init__(self, in_ch, out_ch, k=3, p=1, d=1):
-        super().__init__()
-        self.block = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, k, padding=p, dilation=d, bias=False),
-            nn.BatchNorm2d(out_ch), nn.ReLU(inplace=True))
-    def forward(self, x): return self.block(x)
+# ── Model and paths ───────────────────────────────────────────────────────────
+# The architecture is shared with training and the API (nwrd/models.py).
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+from nwrd.models import build_model, load_checkpoint  # noqa: E402
 
-class ContextFlow(nn.Module):
-    def __init__(self, in_ch, out_ch, scale):
-        super().__init__()
-        self.scale  = scale
-        self.encode = ConvBNReLU(in_ch, out_ch)
-        self.decode = ConvBNReLU(out_ch, out_ch)
-    def forward(self, x):
-        h, w = x.shape[-2:]
-        xd = F.avg_pool2d(x, self.scale) if self.scale > 1 else x
-        f  = self.decode(self.encode(xd))
-        return F.interpolate(f, (h,w), mode='bilinear', align_corners=False) if self.scale > 1 else f
-
-class AttentionFusion(nn.Module):
-    def __init__(self, in_ch):
-        super().__init__()
-        self.att = nn.Sequential(
-            nn.Conv2d(in_ch, in_ch//4, 1), nn.ReLU(inplace=True),
-            nn.Conv2d(in_ch//4, in_ch, 1), nn.Sigmoid())
-    def forward(self, x): return x * self.att(x)
-
-class CAM(nn.Module):
-    def __init__(self, in_ch, out_ch=256):
-        super().__init__()
-        self.global_flow   = nn.Sequential(
-            ConvBNReLU(in_ch, out_ch, k=3, p=2, d=2),
-            ConvBNReLU(out_ch, out_ch, k=3, p=4, d=4),
-            ConvBNReLU(out_ch, out_ch, k=3, p=8, d=8))
-        self.context_flows = nn.ModuleList([
-            ContextFlow(in_ch, out_ch, 2),
-            ContextFlow(in_ch, out_ch, 4),
-            ContextFlow(in_ch, out_ch, 8)])
-        self.pre_fusion    = ConvBNReLU(out_ch*4, out_ch, k=1, p=0)
-        self.re_fusion     = AttentionFusion(out_ch)
-        self.out_conv      = ConvBNReLU(out_ch, out_ch)
-    def forward(self, x):
-        gf    = self.global_flow(x)
-        cfs   = [cf(x) for cf in self.context_flows]
-        fused = self.pre_fusion(torch.cat([gf]+cfs, dim=1))
-        return self.out_conv(self.re_fusion(fused))
-
-class AsymmetricDecoder(nn.Module):
-    def __init__(self, high_ch, low_ch, out_ch=128):
-        super().__init__()
-        self.low_reduce = ConvBNReLU(low_ch, 48, k=1, p=0)
-        self.fuse = nn.Sequential(
-            ConvBNReLU(high_ch+48, out_ch), ConvBNReLU(out_ch, out_ch))
-    def forward(self, high, low):
-        high_up = F.interpolate(high, low.shape[-2:], mode='bilinear', align_corners=False)
-        return self.fuse(torch.cat([high_up, self.low_reduce(low)], dim=1))
-
-class CANet(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.encoder = EfficientNet.from_name('efficientnet-b4')
-        try:
-            self.encoder.load_state_dict(
-                torch.load('backend/models/efficientnet-b4-6ed6700e.pth', map_location='cpu')
-            )
-        except Exception as e:
-            pass # Handle gracefully in app if needed, or ignore if pretrained missing
-            
-        self.reduce  = ConvBNReLU(1792, 512, k=1, p=0)
-        self.cam     = CAM(512, 256)
-        self.decoder = AsymmetricDecoder(256, 32, 128)
-        self.dropout = nn.Dropout2d(0.3)
-        self.head    = nn.Sequential(
-            nn.Conv2d(128, 64, 3, padding=1), nn.ReLU(inplace=True),
-            nn.Conv2d(64, 1, 1))
-    def forward(self, x):
-        enc   = self.encoder.extract_features(x)
-        low   = self.encoder.extract_endpoints(x)['reduction_2']
-        x_cam = self.cam(self.reduce(enc))
-        x_dec = self.dropout(self.decoder(x_cam, low))
-        out   = self.head(x_dec)
-        return F.interpolate(out, scale_factor=4, mode='bilinear', align_corners=False)
+CHECKPOINT = ROOT / 'backend' / 'models' / 'best_model.pth'
+RESULTS = ROOT / 'backend' / 'results' / 'results.json'
+VIS_DIR = ROOT / 'backend' / 'visualisations'
 
 
 @st.cache_resource
 def load_model():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model  = CANet().to(device)
-    if os.path.exists('backend/models/best_model.pth'):
-        ckpt   = torch.load('backend/models/best_model.pth', map_location=device)
-        model.load_state_dict(ckpt['model'])
-        model.eval()
-        return model, device
-    else:
+    if not CHECKPOINT.exists():
         return None, device
+    model = build_model('canet_b4', pretrained=False).to(device)
+    load_checkpoint(model, CHECKPOINT, map_location=device)
+    return model.eval(), device
 
 @st.cache_data
 def load_results():
-    if os.path.exists('backend/results/results.json'):
-        with open('backend/results/results.json', 'r') as f:
-            return json.load(f)
-    return None
+    return json.loads(RESULTS.read_text()) if RESULTS.exists() else None
 
 # ── Pages ─────────────────────────────────────────────────────────────────────
 
@@ -284,7 +201,7 @@ def page_results():
     
     st.markdown("### 🎛️ Best Threshold Optimization")
     thresh = results.get("best_threshold", "N/A")
-    st.info(f"**Best Binarization Threshold: {thresh}**\\n\\nThis threshold was found to maximize the Dice score on the validation set. It optimally balances false positives and false negatives.")
+    st.info(f"**Best Binarization Threshold: {thresh}**\n\nChosen to maximise IoU (equivalently Dice) on the validation split, then applied unchanged to the reported split.")
     
     st.markdown("### ⏳ Training History")
     history = results.get("history", [])
@@ -297,27 +214,27 @@ def page_visualizations():
     st.title("👁️ Visualizations")
     
     st.markdown("### 📈 Training & Validation Curves")
-    if os.path.exists('backend/viusalisations/training_curves.png'):
-        st.image(PILImage.open('backend/viusalisations/training_curves.png'), use_column_width=True)
+    if (VIS_DIR / 'training_curves.png').exists():
+        st.image(PILImage.open(VIS_DIR / 'training_curves.png'), use_column_width=True)
     else:
         st.warning("⚠️ `training_curves.png` not found.")
     st.caption("These curves show the loss decreasing and IoU/Dice metrics increasing over epochs, indicating proper convergence and learning without severe overfitting.")
         
     st.divider()
     st.markdown("### 🧮 Confusion Matrix")
-    if os.path.exists('backend/viusalisations/confusion_matrix (2).png'):
-        st.image(PILImage.open('backend/viusalisations/confusion_matrix (2).png'), width=600)
+    if (VIS_DIR / 'confusion_matrix.png').exists():
+        st.image(PILImage.open(VIS_DIR / 'confusion_matrix.png'), width=600)
     else:
         st.warning("⚠️ `confusion_matrix.png` not found.")
     st.caption("**True Positives (TP)**: Correctly predicted rust. **True Negatives (TN)**: Correctly predicted healthy tissue. **False Positives (FP)**: Healthy predicted as rust. **False Negatives (FN)**: Rust missed by the model.")
 
     st.divider()
     st.markdown("### 🖼️ Qualitative Results")
-    if os.path.exists('backend/viusalisations/qualitative_results.png'):
-        st.image(PILImage.open('backend/viusalisations/qualitative_results.png'), use_column_width=True)
+    if (VIS_DIR / 'qualitative_results.png').exists():
+        st.image(PILImage.open(VIS_DIR / 'qualitative_results.png'), use_column_width=True)
     else:
         st.warning("⚠️ `qualitative_results.png` not found.")
-    st.caption("The 4 panels demonstrate the model pipeline: (1) Original Image, (2) Ground Truth Mask from annotators, (3) Probability Heatmap showing model confidence, (4) Final Binary Mask after thresholding.")
+    st.caption("Each row is a rust-positive patch: the original image, the ground-truth mask from annotators, and the predicted mask after thresholding.")
 
 
 def page_prediction():
@@ -330,7 +247,7 @@ def page_prediction():
         
     st.sidebar.header("Settings")
     threshold = st.sidebar.slider(
-        "Detection Threshold", 0.25, 0.75, 0.45, 0.01,
+        "Detection Threshold", 0.05, 0.95, float((load_results() or {}).get("best_threshold", 0.5)), 0.01,
         help="Lower = more sensitive to rust, Higher = more conservative"
     )
     show_overlay = st.sidebar.checkbox("Show red overlay", value=True)
@@ -363,7 +280,7 @@ def page_prediction():
             with torch.no_grad():
                 pred_prob = torch.sigmoid(model(inp)).squeeze().cpu().numpy()
                 
-        pred_bin = (pred_prob > threshold).astype(np.uint8)
+        pred_bin = (pred_prob >= threshold).astype(np.uint8)
         
         # Original array for display
         display_img = np.array(img_resized)

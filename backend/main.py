@@ -1,16 +1,15 @@
-import os
 import json
+import sys
+from pathlib import Path
+from typing import Optional
 import base64
 import io
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
 from PIL import Image as PILImage
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from efficientnet_pytorch import EfficientNet
 
 app = FastAPI(title="Wheat Rust Detection API")
 
@@ -23,125 +22,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Model Architecture (CANet) ────────────────────────────────────────────────
-class ConvBNReLU(nn.Module):
-    def __init__(self, in_ch, out_ch, k=3, p=1, d=1):
-        super().__init__()
-        self.block = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, k, padding=p, dilation=d, bias=False),
-            nn.BatchNorm2d(out_ch), nn.ReLU(inplace=True))
-    def forward(self, x): return self.block(x)
+# ── Model ─────────────────────────────────────────────────────────────────────
+# The architecture lives in nwrd/models.py, shared with training. The checkpoint holds the
+# encoder weights too, so no separate EfficientNet download is needed.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from nwrd.models import build_model, load_checkpoint  # noqa: E402
 
-class ContextFlow(nn.Module):
-    def __init__(self, in_ch, out_ch, scale):
-        super().__init__()
-        self.scale  = scale
-        self.encode = ConvBNReLU(in_ch, out_ch)
-        self.decode = ConvBNReLU(out_ch, out_ch)
-    def forward(self, x):
-        h, w = x.shape[-2:]
-        xd = F.avg_pool2d(x, self.scale) if self.scale > 1 else x
-        f  = self.decode(self.encode(xd))
-        return F.interpolate(f, (h,w), mode='bilinear', align_corners=False) if self.scale > 1 else f
+BACKEND = ROOT / 'backend'
+CHECKPOINT = BACKEND / 'models' / 'best_model.pth'
+RESULTS = BACKEND / 'results' / 'results.json'
+VIS_DIR = BACKEND / 'visualisations'
 
-class AttentionFusion(nn.Module):
-    def __init__(self, in_ch):
-        super().__init__()
-        self.att = nn.Sequential(
-            nn.Conv2d(in_ch, in_ch//4, 1), nn.ReLU(inplace=True),
-            nn.Conv2d(in_ch//4, in_ch, 1), nn.Sigmoid())
-    def forward(self, x): return x * self.att(x)
-
-class CAM(nn.Module):
-    def __init__(self, in_ch, out_ch=256):
-        super().__init__()
-        self.global_flow   = nn.Sequential(
-            ConvBNReLU(in_ch, out_ch, k=3, p=2, d=2),
-            ConvBNReLU(out_ch, out_ch, k=3, p=4, d=4),
-            ConvBNReLU(out_ch, out_ch, k=3, p=8, d=8))
-        self.context_flows = nn.ModuleList([
-            ContextFlow(in_ch, out_ch, 2),
-            ContextFlow(in_ch, out_ch, 4),
-            ContextFlow(in_ch, out_ch, 8)])
-        self.pre_fusion    = ConvBNReLU(out_ch*4, out_ch, k=1, p=0)
-        self.re_fusion     = AttentionFusion(out_ch)
-        self.out_conv      = ConvBNReLU(out_ch, out_ch)
-    def forward(self, x):
-        gf    = self.global_flow(x)
-        cfs   = [cf(x) for cf in self.context_flows]
-        fused = self.pre_fusion(torch.cat([gf]+cfs, dim=1))
-        return self.out_conv(self.re_fusion(fused))
-
-class AsymmetricDecoder(nn.Module):
-    def __init__(self, high_ch, low_ch, out_ch=128):
-        super().__init__()
-        self.low_reduce = ConvBNReLU(low_ch, 48, k=1, p=0)
-        self.fuse = nn.Sequential(
-            ConvBNReLU(high_ch+48, out_ch), ConvBNReLU(out_ch, out_ch))
-    def forward(self, high, low):
-        high_up = F.interpolate(high, low.shape[-2:], mode='bilinear', align_corners=False)
-        return self.fuse(torch.cat([high_up, self.low_reduce(low)], dim=1))
-
-class CANet(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.encoder = EfficientNet.from_name('efficientnet-b4')
-        try:
-            self.encoder.load_state_dict(
-                torch.load('backend/models/efficientnet-b4-6ed6700e.pth', map_location='cpu')
-            )
-        except Exception:
-            print("Warning: Could not load efficientnet-b4 weights locally. Ensure they are in backend/models/")
-        
-        self.reduce  = ConvBNReLU(1792, 512, k=1, p=0)
-        self.cam     = CAM(512, 256)
-        self.decoder = AsymmetricDecoder(256, 32, 128)
-        self.dropout = nn.Dropout2d(0.3)
-        self.head    = nn.Sequential(
-            nn.Conv2d(128, 64, 3, padding=1), nn.ReLU(inplace=True),
-            nn.Conv2d(64, 1, 1))
-    def forward(self, x):
-        enc   = self.encoder.extract_features(x)
-        low   = self.encoder.extract_endpoints(x)['reduction_2']
-        x_cam = self.cam(self.reduce(enc))
-        x_dec = self.dropout(self.decoder(x_cam, low))
-        out   = self.head(x_dec)
-        return F.interpolate(out, scale_factor=4, mode='bilinear', align_corners=False)
-
-# ── Load Model at Startup ─────────────────────────────────────────────────────
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = None
+
+
+def default_threshold():
+    """The validation-selected threshold recorded with the metrics, else 0.5."""
+    try:
+        return float(json.loads(RESULTS.read_text())['best_threshold'])
+    except (OSError, KeyError, ValueError):
+        return 0.5
+
 
 @app.on_event("startup")
 def load_model():
     global model
-    # Shipped via Git LFS in backend/models/; the README asks for it in backend/.
-    candidates = ['backend/models/best_model.pth', 'backend/best_model.pth']
-    model_path = next((p for p in candidates if os.path.exists(p)), None)
-    if model_path is None:
-        model = None
-        print(f"Error: no checkpoint at {' or '.join(candidates)}. /api/predict will return 500.")
+    if not CHECKPOINT.exists():
+        print(f"Error: no checkpoint at {CHECKPOINT}. /api/predict will return 500.")
         return
-    model = CANet().to(device)
-    ckpt = torch.load(model_path, map_location=device)
-    model.load_state_dict(ckpt['model'])
+    model = build_model('canet_b4', pretrained=False).to(device)
+    load_checkpoint(model, CHECKPOINT, map_location=device)
     model.eval()
-    print(f"Model loaded from {model_path} on {device}")
+    print(f"Model loaded from {CHECKPOINT} on {device}")
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/results")
 def get_results():
-    filepath = 'backend/results/results.json'
-    if not os.path.exists(filepath):
-        raise HTTPException(status_code=404, detail=f"{filepath} not found")
-    with open(filepath, 'r') as f:
-        return json.load(f)
+    if not RESULTS.exists():
+        raise HTTPException(status_code=404, detail=f"{RESULTS.relative_to(ROOT)} not found")
+    return json.loads(RESULTS.read_text())
 
 @app.get("/api/images/{name}")
 def get_image(name: str):
-    filepath = os.path.join('backend', 'viusalisations', name)
-    if os.path.exists(filepath) and name.endswith('.png'):
+    filepath = VIS_DIR / Path(name).name
+    if filepath.suffix == '.png' and filepath.exists():
         return FileResponse(filepath)
     raise HTTPException(status_code=404, detail="Image not found")
 
@@ -152,9 +79,11 @@ def image_to_base64(img_arr, mode='RGB'):
     return base64.b64encode(buf.getvalue()).decode('utf-8')
 
 @app.post("/api/predict")
-async def predict(file: UploadFile = File(...), threshold: float = Form(0.45)):
+async def predict(file: UploadFile = File(...), threshold: Optional[float] = Form(None)):
     if not model:
         raise HTTPException(status_code=500, detail="Model not loaded")
+    if threshold is None:
+        threshold = default_threshold()
 
     # Read image
     contents = await file.read()
@@ -178,7 +107,7 @@ async def predict(file: UploadFile = File(...), threshold: float = Form(0.45)):
     with torch.no_grad():
         pred_prob = torch.sigmoid(model(inp)).squeeze().cpu().numpy()
         
-    pred_bin = (pred_prob > threshold).astype(np.uint8)
+    pred_bin = (pred_prob >= threshold).astype(np.uint8)
     
     # Generate Output Images
     display_img = np.array(img_resized)
@@ -211,6 +140,7 @@ async def predict(file: UploadFile = File(...), threshold: float = Form(0.45)):
         "total_pixels": total_pixels,
         "coverage_pct": round(coverage_pct, 2),
         "severity": severity,
+        "threshold": threshold,
         "pred_mask_b64": pred_mask_b64,
         "prob_map_b64": prob_map_b64,
         "overlay_b64": overlay_b64,

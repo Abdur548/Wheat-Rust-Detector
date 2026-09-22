@@ -9,12 +9,12 @@ const Visualizations = () => {
     {
       title: 'Confusion Matrix',
       description: 'The confusion matrix provides a detailed breakdown of the model\'s predictions. TP (True Positives) = correctly detected rust. TN (True Negatives) = correctly rejected healthy background. FP (False Positives) = healthy tissue flagged as rust (false alarms). FN (False Negatives) = rust missed by the model. The high TP and TN values indicate strong performance.',
-      imgSrc: 'http://localhost:8000/api/images/confusion_matrix%20(2).png',
+      imgSrc: 'http://localhost:8000/api/images/confusion_matrix.png',
       caption: 'Figure 2: Pixel-wise Confusion Matrix'
     },
     {
       title: 'Qualitative Results',
-      description: 'The 4 panels demonstrate the model pipeline: (1) Original Image showing the raw wheat leaf, (2) Ground Truth Mask provided by human annotators, (3) Probability Heatmap showing model confidence (brighter = more confident), and (4) Final Binary Mask after thresholding.',
+      description: 'Each row is a rust-positive patch: the original leaf image, the ground-truth mask from human annotators, and the predicted mask after thresholding.',
       imgSrc: 'http://localhost:8000/api/images/qualitative_results.png',
       caption: 'Figure 3: Sample Qualitative Prediction Pipeline'
     }
