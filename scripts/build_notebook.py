@@ -27,8 +27,11 @@ Trains every model under one protocol, picks the threshold on **val**, reports o
 *Your Work* → this notebook's latest version, and commit again. The restore cell copies the
 previous `runs/` and every run resumes where it stopped. Repeat until the log has no `INCOMPLETE`.
 
-**Colab**: Runtime → GPU. Add `KAGGLE_USERNAME` and `KAGGLE_KEY` as Colab secrets (🔑 sidebar)
-so the dataset can be downloaded. Never paste keys into the notebook itself.
+**Colab**: Runtime → GPU. Add `KAGGLE_USERNAME` and `KAGGLE_KEY` as Colab secrets (🔑 sidebar);
+if secrets are unavailable the notebook asks for them, and the key stays hidden. Never paste keys
+into the notebook itself. Runs are written to `MyDrive/nwrd_runs` so a disconnect does not lose
+them: re-running the notebook continues where it stopped. Free Colab sessions are shorter than
+Kaggle's, so expect several sessions, or set `USE_DRIVE_ON_COLAB = False` for a throwaway run.
 
 Rough cost on a T4: 1.5–2.5 h per run × 4 runs per seed (3 with `TUNE_UNET_LR = False`) × 3 seeds,
 so plan on two or three sessions (Kaggle's weekly quota is 30 GPU-h).
@@ -45,49 +48,79 @@ if TUNE_UNET_LR and 'unet_tuned' not in MODELS:
     MODELS.append('unet_tuned')
 SEEDS = [42, 43, 44]
 EPOCHS = 30
-TIME_BUDGET_HOURS = 11.0    # Kaggle kills sessions at 12 h; stop cleanly before that
-NUM_WORKERS = 4
-OUT = '/kaggle/working/runs' if os.path.exists('/kaggle') else '/content/runs'"""
+NUM_WORKERS = 4   # TIME_BUDGET_HOURS is set per platform in the next cell
+# Colab wipes local disk on disconnect, so runs go to Google Drive and survive to be resumed.
+# Set False to keep them in /content (lost when the runtime ends).
+USE_DRIVE_ON_COLAB = True"""
+
+STORAGE = """# Where runs are written. On Kaggle: /kaggle/working (kept with each committed version).
+# On Colab: Google Drive, so a disconnect does not lose finished runs.
+ON_KAGGLE = os.path.exists('/kaggle/working')
+if ON_KAGGLE:
+    OUT, TIME_BUDGET_HOURS = '/kaggle/working/runs', 11.0     # Kaggle kills sessions at 12 h
+else:
+    OUT, TIME_BUDGET_HOURS = '/content/runs', 3.0             # free Colab sessions are shorter
+    if USE_DRIVE_ON_COLAB:
+        try:
+            from google.colab import drive
+            drive.mount('/content/drive')
+            OUT = '/content/drive/MyDrive/nwrd_runs'
+        except Exception as e:
+            print('Drive not mounted (%s) - runs stay in %s and are LOST on disconnect.' % (e, OUT))
+os.makedirs(OUT, exist_ok=True)
+print('runs ->', OUT, '| time budget', TIME_BUDGET_HOURS, 'h')"""
 
 SETUP = """import os, sys, glob, shutil, subprocess
-!pip install -q segmentation-models-pytorch==0.5.0 efficientnet_pytorch==0.7.1 albumentations
+!pip install -q segmentation-models-pytorch==0.5.0 efficientnet_pytorch==0.7.1 albumentations kagglehub
 import torch
 print('torch', torch.__version__, '| GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NONE')
 assert torch.cuda.is_available(), 'enable a GPU accelerator'
 os.makedirs('code/nwrd', exist_ok=True)
 sys.path.insert(0, os.path.abspath('code'))"""
 
-DATA = """# Kaggle mounts the dataset under /kaggle/input; Colab downloads it with kagglehub.
-DATA_ROOT = ''
-if not os.path.exists('/kaggle/input'):
-    from google.colab import userdata
-    os.environ['KAGGLE_USERNAME'] = userdata.get('KAGGLE_USERNAME')
-    os.environ['KAGGLE_KEY'] = userdata.get('KAGGLE_KEY')
+DATA = """from nwrd.data import find_data_root
+
+# Kaggle: the attached dataset already sits under /kaggle/input. Colab: download it.
+# Deciding by "does /kaggle/input exist" is unreliable - some Colab runtimes have an empty
+# /kaggle/input - so try to find the data first and only download if that fails.
+try:
+    DATA_ROOT = find_data_root(None)
+except FileNotFoundError:
     import kagglehub
-    DATA_ROOT = kagglehub.dataset_download('abdur548/nwrd-patched')
-from nwrd.data import find_data_root
-DATA_ROOT = find_data_root(DATA_ROOT or None)
+    if not os.environ.get('KAGGLE_KEY'):
+        try:
+            from google.colab import userdata      # Colab: key icon in the left sidebar
+            os.environ['KAGGLE_USERNAME'] = userdata.get('KAGGLE_USERNAME')
+            os.environ['KAGGLE_KEY'] = userdata.get('KAGGLE_KEY')
+        except Exception as e:
+            import getpass
+            print('Colab secrets unavailable (%s); enter Kaggle credentials.' % e)
+            os.environ['KAGGLE_USERNAME'] = input('Kaggle username: ').strip()
+            os.environ['KAGGLE_KEY'] = getpass.getpass('Kaggle API key (hidden): ').strip()
+    DATA_ROOT = find_data_root(kagglehub.dataset_download('abdur548/nwrd-patched'))
+
 print('dataset:', DATA_ROOT, '|', {s: len(os.listdir(os.path.join(DATA_ROOT, s, 'images'))) for s in ('train', 'val', 'test')})
 # How were the splits made? If patches of one field image appear in more than one split, the
 # test scores are inflated by leakage. Inspect the dataset's own notes and file naming.
 for f in ('README.md', 'processing_stats.json'):
     p = os.path.join(DATA_ROOT, f)
     if os.path.exists(p):
-        print(f'--- {f} ---'); print(open(p, encoding='utf-8', errors='replace').read()[:3000])
+        print('--- %s ---' % f); print(open(p, encoding='utf-8', errors='replace').read()[:3000])
 for s in ('train', 'val', 'test'):
     print(s, sorted(os.listdir(os.path.join(DATA_ROOT, s, 'images')))[:5])"""
 
-RESTORE = """# Continue from a previous session: copy runs/ from any attached earlier notebook version.
+RESTORE = """# Continue an earlier session. On Drive/Kaggle-working, finished runs are already in OUT.
 prev = [os.path.dirname(p) for p in glob.glob('/kaggle/input/**/runs/config.json', recursive=True)]
-if prev and not os.path.exists(OUT):
-    shutil.copytree(prev[0], OUT)
+if prev and not os.path.exists(os.path.join(OUT, 'config.json')):
+    shutil.copytree(prev[0], OUT, dirs_exist_ok=True)
     print('restored previous runs from', prev[0])
-    for d in sorted(glob.glob(f'{OUT}/*/seed*')):
-        state = 'done' if os.path.exists(f'{d}/metrics.json') else 'trained' if os.path.exists(f'{d}/TRAINED') \\
-            else 'partial' if os.path.exists(f'{d}/last.pt') else 'empty'
-        print(f'  {d[len(OUT) + 1:]}: {state}')
-else:
-    print('starting fresh' if not prev else f'{OUT} already exists; not restoring')"""
+done = sorted(glob.glob(os.path.join(OUT, '*', 'seed*')))
+for d in done:
+    state = ('done' if os.path.exists(os.path.join(d, 'metrics.json')) else
+             'trained' if os.path.exists(os.path.join(d, 'TRAINED')) else
+             'partial' if os.path.exists(os.path.join(d, 'last.pt')) else 'empty')
+    print(' ', os.path.relpath(d, OUT), state)
+print('%d run directories found' % len(done))"""
 
 RUN = """cmd = [sys.executable, '-m', 'nwrd.run', '--data-root', DATA_ROOT, '--out', OUT,
        '--models', *MODELS, '--seeds', *map(str, SEEDS), '--epochs', str(EPOCHS),
@@ -131,7 +164,7 @@ def code(src):
 
 
 def main():
-    cells = [md(INTRO), code(SETUP), code(CONFIG),
+    cells = [md(INTRO), code(SETUP), code(CONFIG), code(STORAGE),
              md('### Pipeline source (generated from `nwrd/` by `scripts/build_notebook.py`; edit there)')]
     for m in MODULES:
         with open(os.path.join(ROOT, 'nwrd', f'{m}.py'), encoding='utf-8') as f:
