@@ -77,6 +77,15 @@ notebook embeds the pipeline, so nothing needs cloning. Runs resume across sessi
 instructions are in its first cell. Budget roughly 18–30 GPU-hours for 4 runs per seed × 3 seeds (set `TUNE_UNET_LR = False` in
 the notebook to drop the tuned-lr UNet run and save a quarter).
 
+**Kaggle from the command line.** With a Kaggle API token saved to `~/.kaggle/kaggle.json`
+(kaggle.com -> Settings -> API -> Create New Token):
+
+```bash
+pip install kaggle
+python scripts/run_on_kaggle.py --watch            # push the notebook, poll, fetch results
+python scripts/run_on_kaggle.py --resume --watch   # continue after a time-budget stop
+```
+
 **Locally, with a GPU:**
 
 ```bash
@@ -99,7 +108,7 @@ notebook.
 ```
 nwrd/            models, data, training, evaluation, benchmark, comparison (shared by everything)
 notebooks/       nwrd_experiments.ipynb (generated); archive/ holds the sprint notebooks
-scripts/         build_notebook.py; extract_paper_figures.py (figures for md/paper_summary.md)
+scripts/         build_notebook.py; extract_paper_figures.py; run_on_kaggle.py
 md/              compare.md, paper_summary.md, improvement_summary.md, figures/paper/ (images extracted from the paper)
 tests/           CPU smoke tests on synthetic data
 backend/         FastAPI inference API; models/best_model.pth (Git LFS)
