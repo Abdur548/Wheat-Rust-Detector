@@ -4,92 +4,118 @@ A deep-learning system that segments wheat rust lesions pixel-by-pixel from leaf
 photographs, turning a visual severity assessment normally made by eye into a
 reproducible measurement of infected leaf area.
 
+**Proposed method:** CANet with an ImageNet-pretrained EfficientNet-B4 encoder.
+**Baseline:** the NWRD dataset paper — Anwar et al., *The NWRD Dataset*, Sensors 23(15):6942,
+2023 (`sensors-23-06942.pdf`) — a plain UNet with adaptive patching with feedback (APF).
+Its architecture is re-trained here under the same protocol as CANet (`unet`). DeepLabV3+
+(ResNet-50) from the internship report is kept as a second reference, and DeepLabV3+
+(EfficientNet-B4) is an optional same-encoder ablation.
+
+Detailed write-ups live in [`md/`](md/): [`md/compare.md`](md/compare.md) (results,
+architecture, pipeline differences and findings, with reasoning) and
+[`md/paper_summary.md`](md/paper_summary.md) (the NWRD paper summarised, with its figures), and
+[`md/improvement_summary.md`](md/improvement_summary.md) (what CANet-B4 changes and why, with
+each claim marked measured, reasoned or pending).
+
 ## Results
 
-CANet with an EfficientNet-B4 encoder, evaluated on the validation split of the
-`abdur548/nwrd-patched` dataset (Kaggle). Metrics are pooled over every pixel in the
-split at a binarisation threshold of 0.79, selected by an F1 sweep over 0.25–0.79 on
-that same split.
+**Pending the re-run.** Final numbers come from `notebooks/nwrd_experiments.ipynb` and land
+in `results/comparison.md`.
 
-| Metric | Value |
-| --- | --- |
-| IoU | 0.7823 |
-| Dice / F1 | 0.8779 |
-| Precision | 0.8649 |
-| Recall | 0.8913 |
-| Specificity | 0.9892 |
-| Accuracy | 0.9822 |
+The figures published so far cannot be used to compare the two models:
 
-| Split | 512×512 patches | Notes |
-| --- | --- | --- |
-| Train | 3,153 of 8,160 available | 2,597 rust-positive, plus 556 background patches (10% of 5,563) |
-| Validation | 480 | 124 contain rust; 7.2% of all pixels are rust |
-| Test | TODO | present in the dataset, not evaluated by any code in this repository |
+| Source | Model | IoU | Dice | Why it is not comparable |
+| --- | --- | --- | --- | --- |
+| Internship report | DeepLabV3+ R50 | 0.8304 | 0.9074 | different preprocessing; threshold tuned on the reported split |
+| Sprint-2 notebook output | CANet-B4 | 0.8116 | 0.8960 | threshold tuned on the reported split; 15-epoch run |
+| `backend/results/results.json` | CANet-B4 | 0.7823 | 0.8779 | a different run from the notebook output; threshold tuned on the reported split |
 
-Three caveats a reader should weigh: the threshold was selected on the same split the
-metrics are reported on; it sits at the top of the swept range, so the F1 optimum may
-lie beyond 0.79; and no held-out test evaluation has been run. Because rust covers only
-7.2% of validation pixels, accuracy and specificity are inflated by the class imbalance
-— IoU and Dice are the meaningful figures.
+The paper's published UNet + APF results, for reference: **P 0.506, R 0.624, F1 0.557** on
+its full test set (Table 3), and **P 0.593, R 0.552, F1 0.564, IoU 0.438** with background-only
+patches removed (Table 4). These are measured on 128px patches of 10 held-out field images,
+a different test unit from ours, so they are not comparable directly with our numbers. That
+is why the paper's UNet is re-trained under our protocol. The pipeline also reports a
+Table-4-style metric (rust-positive test patches only).
 
-Source: `backend/results/results.json`, written by
-`backend/models/DL_Project_sprint2.ipynb` cells 17-18. Every figure above is
-reproducible from the pixel counts in `backend/viusalisations/confusion_matrix (2).png`.
+All three evaluate on the validation split, using a threshold picked on that same split.
+None touches the test split, and the two models were trained with different
+background-sampling ratios.
 
-## Method
+## Evaluation protocol
 
-- **Architecture** — ImageNet-pretrained EfficientNet-B4 encoder → 1×1 reduction (1792→512) → chained context aggregation module (serial global flow with dilations 2/4/8, three parallel context flows at scales 2/4/8, attention-guided re-fusion) → asymmetric decoder fusing 1/32 context with 1/4 low-level features → single-channel head upsampled ×4. 29,524,784 parameters, 512×512 input.
-- **Loss** — 0.7 × Dice + 0.3 × BCE-with-logits, with `pos_weight` 2.96 computed from the training masks.
-- **Optimisation** — AdamW (lr 5e-5, weight decay 1e-4), CosineAnnealingWarmRestarts (T_0=5, T_mult=2, eta_min=1e-7), mixed precision, gradient clipping at 1.0.
-- **Training** — 15 epochs, batch size 8, encoder frozen for the first 3 epochs; the checkpoint with the best validation IoU is kept.
-- **Augmentation** — resize to 512, horizontal and vertical flips, 90° rotations, brightness/contrast jitter, elastic transform, ImageNet normalisation.
+Implemented in `nwrd/`; every model gets identical treatment.
+
+- **Data** — `abdur548/nwrd-patched` (Kaggle), 512×512 patches. Training uses every
+  rust-positive patch plus 20% of background-only patches, sampled with a fixed seed so all
+  models and seeds see the same set. Val and test are used in full.
+- **Training** — 30 epochs, batch 8, AdamW (lr 5e-5, wd 1e-4), CosineAnnealingWarmRestarts
+  (T_0 5, T_mult 2), fp16 mixed precision, gradient clip 1.0, pretrained encoders frozen for
+  the first 3 epochs (the from-scratch UNet is never frozen). Loss 0.7·Dice + 0.3·BCE with `pos_weight` from the training masks.
+- **Model selection** — the epoch with the best validation IoU at threshold 0.5.
+- **Threshold** — chosen on **val** (IoU-maximising, grid 0.05–0.95), then frozen.
+- **Reported metrics** — **test** split, pooled over every pixel, at the val threshold and at
+  a fixed 0.5. Mean ± std over 3 seeds.
+- **Significance** — paired image-level bootstrap (5,000 resamples) of the test IoU/Dice
+  difference, plus a seed-level paired t-test.
+- **Efficiency** — parameters, FLOPs, GPU latency (bs 1, fp32/fp16), throughput and peak
+  memory (bs 8, fp16), CPU latency, and training time per epoch, all measured on the same
+  device.
+
+Fixes relative to the sprint notebooks:
+- The per-epoch IoU averaged per batch, scoring a correctly predicted background-only batch
+  as 0. That is why the training curves sat near 0.58 while pooled IoU was about 0.81.
+  Metrics are now pooled.
+- CANet ran its encoder twice per forward pass (`extract_features` plus
+  `extract_endpoints`). It now runs once. Outputs are bit-identical and the encoder cost is
+  halved; the benchmark reports both versions.
 
 ## Reproduce
 
-TODO — there is no single-command evaluation script in this repository yet.
+**Kaggle (recommended).** Upload `notebooks/nwrd_experiments.ipynb`, attach the
+`abdur548/nwrd-patched` dataset, pick GPU T4 and Internet on, then *Save & Run All*. The
+notebook embeds the pipeline, so nothing needs cloning. Runs resume across sessions; the
+instructions are in its first cell. Budget roughly 18–30 GPU-hours for 4 runs per seed × 3 seeds (set `TUNE_UNET_LR = False` in
+the notebook to drop the tuned-lr UNet run and save a quarter).
 
-The table above was produced by running `backend/models/DL_Project_sprint2.ipynb` end to
-end on a Colab GPU runtime. The notebook downloads the dataset itself through
-`kagglehub`; cell 17 sweeps the threshold across the validation split, and cell 18
-computes the final metrics and writes `results.json`.
+**Locally, with a GPU:**
 
-## Setup
-
-### 1. Download Model Weights
-Before starting the backend, you need to download the required PyTorch `.pth` model files and place them inside the `backend/` directory:
-- `best_model.pth`: The trained custom model weights.
-Link:https://drive.google.com/file/d/1KvrcrUshGom8CA9JmjQkAXsIknWTwlRp/view?usp=sharing
-
-- `efficientnet-b4-6ed6700e.pth`: The pre-trained EfficientNet-B4 backbone. Download it from [here](https://github.com/lukemelas/EfficientNet-PyTorch/releases/download/1.0/efficientnet-b4-6ed6700e.pth).
-
-Ensure both files are present in the `backend/` folder.
-
-### 2. Install Dependencies
-Ensure you have Python 3.8+ installed. Install the required packages using the `requirements.txt` file:
-
-```powershell
+```bash
 pip install -r requirements.txt
+python -m nwrd.run --data-root /path/to/wheat_rust_patches --out runs
+python -m nwrd.run --out runs --stage compare      # re-aggregate only
+python -m pytest tests -q                          # CPU smoke tests, ~2 min
 ```
 
-### 3. Start the Backend
-Open a terminal in the root directory. Activate the python virtual environment (if using one), and start the FastAPI server:
+After editing anything in `nwrd/`, run `python scripts/build_notebook.py` to regenerate the
+notebook.
 
-```powershell
-# Activate virtual environment (optional)
-.\venv\Scripts\Activate
+**Taking results back into the app:** from the run output, copy `export/results.json` to
+`backend/results/`, `export/best_model.pth` to `backend/models/`, and `export/*.png` to
+`backend/visualisations/`. Copy `comparison.md`, `comparison.json` and `benchmark.json` to
+`results/`. The exported model is the CANet seed with the best *validation* IoU.
 
-# Start the backend server
-uvicorn backend.main:app --reload
+## Layout
+
 ```
-The API will run at `http://localhost:8000`.
-
-### 3. Start the Frontend
-Open a new terminal in the `frontend` directory. Install the npm dependencies and start the Vite dev server:
-
-```powershell
-cd frontend
-
-# Run the development server
-npm run dev
+nwrd/            models, data, training, evaluation, benchmark, comparison (shared by everything)
+notebooks/       nwrd_experiments.ipynb (generated); archive/ holds the sprint notebooks
+scripts/         build_notebook.py; extract_paper_figures.py (figures for md/paper_summary.md)
+md/              compare.md, paper_summary.md, improvement_summary.md, figures/paper/ (images extracted from the paper)
+tests/           CPU smoke tests on synthetic data
+backend/         FastAPI inference API; models/best_model.pth (Git LFS)
+frontend/        React + Vite UI
+dashboard.py     Streamlit alternative to the React UI
 ```
-The frontend will run at `http://localhost:5173`.
+
+## Running the app
+
+1. **Weights** — `backend/models/best_model.pth` is stored with Git LFS (`git lfs pull`), or
+   download it from
+   [Google Drive](https://drive.google.com/file/d/1KvrcrUshGom8CA9JmjQkAXsIknWTwlRp/view?usp=sharing).
+   It contains the full network, so no separate EfficientNet download is needed.
+2. **Dependencies** — Python 3.9+: `pip install -r requirements.txt`.
+3. **Backend** — `uvicorn backend.main:app --reload`, serving at `http://localhost:8000`.
+   The prediction threshold defaults to the val-selected value in
+   `backend/results/results.json`.
+4. **Frontend** — `cd frontend && npm install && npm run dev`, at `http://localhost:5173`.
+5. **Or the Streamlit dashboard** — `streamlit run dashboard.py`.
