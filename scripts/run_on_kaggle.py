@@ -22,7 +22,7 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOTEBOOK = os.path.join(ROOT, 'notebooks', 'nwrd_experiments.ipynb')
-SLUG = 'nwrd-canet-vs-baselines'
+SLUG = 'nwrd-canet-b4-vs-baselines'  # must match the slug Kaggle derives from the title
 PUSH_DIR = os.path.join(ROOT, '.kaggle_push')
 OUT_DIR = os.path.join(ROOT, 'runs_from_kaggle')
 DONE_STATES = ('complete', 'error', 'cancelAcknowledged', 'cancelRequested')

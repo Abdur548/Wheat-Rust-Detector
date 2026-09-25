@@ -20,3 +20,7 @@ runs/
 !backend/visualisations/*.png
 !results/**/*.png
 !md/**/*.png
+
+# Kaggle CLI staging and downloaded outputs
+.kaggle_push/
+runs_from_kaggle/
